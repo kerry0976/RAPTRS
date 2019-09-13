@@ -25,35 +25,39 @@ bool AircraftEffectors::UpdateConfig(uint8_t id, uint8_t address, std::vector<ui
     // not our message
     return false;
   }
+  
   message::config_effector_t msg;
   msg.unpack(Payload->data(), Payload->size());
-  if ( address == 0 ) {
-    // local effector
-    Data Temp;
-    Effectors_.push_back(Temp);
-    if ( msg.effector == message::effector_type::motor ) {
-      Effectors_.back().Type = kMotor;
-      Effectors_.back().SafedCommand = msg.safed_command;
-    } else if ( msg.effector == message::effector_type::pwm ) {
-      Effectors_.back().Type = kPwm;
-    } else if ( msg.effector == message::effector_type::sbus ) {
-      Effectors_.back().Type = kSbus;
-    }
-    if ( DefinitionTreePtr->GetValuePtr<float*>(msg.input.c_str()) ) {
-      Effectors_.back().Input = DefinitionTreePtr->GetValuePtr<float*>(msg.input.c_str());
-    } else {
-      HardFail("ERROR: Effector input not found in global data.");
-    }
-    Serial.print("config eff cal: ");
-    for (int i=0; i < message::max_calibration; i++) {
-      Serial.print(i); Serial.print(":"); Serial.print(msg.calibration[i]); Serial.print("  ");
-      if ( !isnanf(msg.calibration[i]) ) {
-        Effectors_.back().Calibration.push_back(msg.calibration[i]);
-      }
-    }
-    Effectors_.back().Channel = msg.channel;
+  
+  // local effector
+  Data Temp;
+  Effectors_.push_back(Temp);
+  Effectors_.back().NodeAddress = address;
+  if ( msg.effector == message::effector_type::motor ) {
+    Effectors_.back().Type = kMotor;
+    Effectors_.back().SafedCommand = msg.safed_command;
+  } else if ( msg.effector == message::effector_type::pwm ) {
+    Effectors_.back().Type = kPwm;
+  } else if ( msg.effector == message::effector_type::sbus ) {
+    Effectors_.back().Type = kSbus;
+  }
+  if ( DefinitionTreePtr->GetValuePtr<float*>(msg.input.c_str()) ) {
+    Effectors_.back().Input = DefinitionTreePtr->GetValuePtr<float*>(msg.input.c_str());
   } else {
-    Serial.print("config node effector: ");
+    HardFail("ERROR: Effector input not found in global data.");
+  }
+  Serial.print("config eff cal: ");
+  for (int i=0; i < message::max_calibration; i++) {
+    Serial.print(i); Serial.print(":"); Serial.print(msg.calibration[i]); Serial.print("  ");
+    if ( !isnanf(msg.calibration[i]) ) {
+      Effectors_.back().Calibration.push_back(msg.calibration[i]);
+    }
+  }
+  Effectors_.back().Channel = msg.channel;
+
+  // When a node is specified find it's entry (or create it) so we can
+  // relay the configuration along.
+  if ( address > 0 ) {
     // node effector
     int found = -1;
     for ( size_t i = 0; i < NodeEffectors_.size(); i++ ) {
@@ -62,7 +66,7 @@ bool AircraftEffectors::UpdateConfig(uint8_t id, uint8_t address, std::vector<ui
       }
     }
     if ( found < 0 ){
-      Serial.print("creating new entry ");
+      Serial.print("creating new NodeEffector entry ");
       found = NodeEffectors_.size();
       NodeEffectors_.push_back(NodeData());
       NodeEffectors_.back().Address = address;
@@ -72,17 +76,9 @@ bool AircraftEffectors::UpdateConfig(uint8_t id, uint8_t address, std::vector<ui
       NodeEffectors_.back().node->Begin();
     }
     Serial.print("index: "); Serial.println(found);
+    Effectors_.back().NodeIndex = found;
     // send config messages
     NodeEffectors_[found].node->SetConfigurationMode();
-    if ( msg.effector == message::effector_type::motor ) {
-      NodeEffectors_[found].Types.push_back(kMotor);
-    } else if ( msg.effector == message::effector_type::pwm ) {
-      NodeEffectors_[found].Types.push_back(kPwm);
-    } else if ( msg.effector == message::effector_type::sbus ) {
-      NodeEffectors_[found].Types.push_back(kSbus);
-    }
-    NodeEffectors_[found].SafedCommands.push_back(msg.safed_command);
-    NodeEffectors_[found].Inputs.push_back(DefinitionTreePtr->GetValuePtr<float*>(msg.input.c_str()));
     NodeEffectors_[found].node->Configure(id, Payload);
   }
 }
@@ -105,79 +101,54 @@ void AircraftEffectors::Begin() {
 }
 
 void AircraftEffectors::SetCommands(message::command_effectors_t *msg, bool ThrottleSafed) {
+  for (size_t i=0; i < NodeEffectors_.size(); i++) {
+    NodeEffectors_[i].NodeCommands.clear();
+  }
   for ( size_t i = 0; i < Effectors_.size(); i++ ) {
-    if (Effectors_[i].Type != kMotor) {
-      Effectors_[i].Output = PolyVal(Effectors_[i].Calibration,msg->command[i]);
-    } else {
-      //Serial.print("safe: "); Serial.println(ThrottleSafed);
-      //Serial.print("safed_command: "); Serial.println(Effectors_[i].SafedCommand);
-      //Serial.print("cal: ");
-      //for ( int i = 0; i < Effectors_[i].Calibration.size(); i++ ) {
-      //  Serial.print(Effectors_[i].Calibration[i]); Serial.print(" ");
-      //}
-      //Serial.println("");
-      if (ThrottleSafed) {
-        Effectors_[i].Output = PolyVal(Effectors_[i].Calibration,Effectors_[i].SafedCommand);
+    if ( Effectors_[i].NodeAddress == 0 ) {
+      float output = 0.0;
+      if (Effectors_[i].Type == kMotor and ThrottleSafed) {
+        output = PolyVal(Effectors_[i].Calibration,Effectors_[i].SafedCommand);
       } else {
-        Effectors_[i].Output = PolyVal(Effectors_[i].Calibration,msg->command[i]);
+        output = PolyVal(Effectors_[i].Calibration,msg->command[i]);
       }
+      Effectors_[i].Output = output;
+    } else {
+      float cmd = msg->command[i];
+      if (Effectors_[i].Type == kMotor and ThrottleSafed) {
+        cmd = Effectors_[i].SafedCommand;
+      }
+      NodeEffectors_[Effectors_[i].NodeIndex].NodeCommands.push_back(cmd);
     }
   }
-  size_t EffectorIndex = Effectors_.size();
   for (size_t i=0; i < NodeEffectors_.size(); i++) {
-    std::vector<float> NodeCommands;
-    for (size_t j=0; j < NodeEffectors_[i].Inputs.size(); j++) {
-      if (NodeEffectors_[i].Types[j] != kMotor) {
-        NodeCommands.push_back(msg->command[EffectorIndex]);
-      } else {
-        if (ThrottleSafed) {
-          NodeCommands.push_back(NodeEffectors_[i].SafedCommands[j]);
-        } else {
-          NodeCommands.push_back(msg->command[EffectorIndex]);
-        }
-      }
-      EffectorIndex++;
-    }
-    NodeEffectors_[i].node->SendEffectorCommand(NodeCommands);
+    NodeEffectors_[i].node->SendEffectorCommand(NodeEffectors_[i].NodeCommands);
   }
 }
 
 void AircraftEffectors::ComputeOutputs(bool ThrottleSafed) {
-  for (size_t i=0; i < Effectors_.size(); i++) {
-    if (Effectors_[i].Type != kMotor) {
-      Effectors_[i].Output = PolyVal(Effectors_[i].Calibration,*Effectors_[i].Input);
-    } else {
-      //Serial.print("safe: "); Serial.println(ThrottleSafed);
-      //Serial.print("safed_command: "); Serial.println(Effectors_[i].SafedCommand);
-      //Serial.print("cal: ");
-      //for ( int j = 0; j < Effectors_[i].Calibration.size(); j++ ) {
-      //  Serial.print(Effectors_[i].Calibration[j]); Serial.print(" ");
-      //}
-      //Serial.println("");
-      if (ThrottleSafed) {
-        Effectors_[i].Output = PolyVal(Effectors_[i].Calibration,Effectors_[i].SafedCommand);
-      } else {
-        Effectors_[i].Output = PolyVal(Effectors_[i].Calibration,*Effectors_[i].Input);
-      }
-    }
-    // Serial.print("eff "); Serial.print(i); Serial.print(" "); Serial.print(*Effectors_[i].Input); Serial.print(" = "); Serial.println(Effectors_[i].Output);
-  }
-  // Serial.print("do node eff's: "); Serial.println(NodeEffectors_.size());
   for (size_t i=0; i < NodeEffectors_.size(); i++) {
-    // Serial.print("node effectors: "); Serial.println(i);
-    std::vector<float> NodeCommands;
-    for (size_t j=0; j < NodeEffectors_[i].Inputs.size(); j++) {
-      if (NodeEffectors_[i].Types[j] != kMotor) {
-        NodeCommands.push_back(*NodeEffectors_[i].Inputs[j]);
+    NodeEffectors_[i].NodeCommands.clear();
+  }
+  for (size_t i=0; i < Effectors_.size(); i++) {
+    if ( Effectors_[i].NodeAddress == 0 ) {
+      float output = 0.0;
+      if (Effectors_[i].Type == kMotor and ThrottleSafed) {
+        output = PolyVal(Effectors_[i].Calibration,Effectors_[i].SafedCommand);
       } else {
-        if (ThrottleSafed) {
-          NodeCommands.push_back(NodeEffectors_[i].SafedCommands[j]);
-        } else {
-          NodeCommands.push_back(*NodeEffectors_[i].Inputs[j]);
-        }
+        output = PolyVal(Effectors_[i].Calibration,*Effectors_[i].Input);
       }
+      Effectors_[i].Output = output;
+    } else {
+      float cmd = *Effectors_[i].Input;
+      if (Effectors_[i].Type == kMotor and ThrottleSafed) {
+        cmd = Effectors_[i].SafedCommand;
+      }
+      NodeEffectors_[Effectors_[i].NodeIndex].NodeCommands.push_back(cmd);
     }
-    NodeEffectors_[i].node->SendEffectorCommand(NodeCommands);
+  }
+  for (size_t i=0; i < NodeEffectors_.size(); i++) {
+    NodeEffectors_[i].node->SendEffectorCommand(NodeEffectors_[i].NodeCommands);
   }
 }
 

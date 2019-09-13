@@ -41,6 +41,7 @@ Where:
    * Safed command is an optional value specifying the command to output for a motor when the throttle is
      safed. This is the input command to the calibration, not the value sent to the motor (i.e. a value of
      -1 instead of 1000 us).
+   * Effectors on Nodes must include "Node": ## where ## is the address number of the node.
 */
 
 /*
@@ -64,22 +65,9 @@ void AircraftEffectors::Configure(const rapidjson::Value& Config) {
   for (size_t i=0; i < Config.Size(); i++) {
     const rapidjson::Value& Effector = Config[i];
     if (Effector.HasMember("Type")) {
-      if (Effector["Type"] == "Node") {
-        if (Effector.HasMember("Effectors")) {
-          assert(Effector["Effectors"].IsArray());
-          for (auto &NodeEffector : Effector["Effectors"].GetArray()) {
-            LoadInput(NodeEffector, "", "Input", &ele, &eleKey);
-            EffNodeVec_.push_back(ele);
-            EffKeyVec_.push_back(eleKey);
-          }
-        } else {
-          throw std::runtime_error(std::string("ERROR")+RootPath_+std::string(": Node effectors not specified in configuration."));
-        }
-      } else {
-        LoadInput(Effector, "", "Input", &ele, &eleKey);
-        EffNodeVec_.push_back(ele);
-        EffKeyVec_.push_back(eleKey);
-      }
+      LoadInput(Effector, "", "Input", &ele, &eleKey);
+      EffNodeVec_.push_back(ele);
+      EffKeyVec_.push_back(eleKey);
     } else {
       throw std::runtime_error(std::string("ERROR")+RootPath_+std::string(": Type not specified in configuration."));
     }

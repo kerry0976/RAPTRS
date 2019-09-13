@@ -73,7 +73,7 @@ void FlightManagementUnit::Configure(const rapidjson::Value& Config) {
   // configuring FMU effectors
   if (Config.HasMember("Effectors")) {
     std::cout << "\t\tSending Effector config to FMU..." << std::flush;
-    ConfigureEffectors(Config["Effectors"], 0);
+    ConfigureEffectors(Config["Effectors"]);
     std::cout << "done!" << std::endl;
   }
 
@@ -107,7 +107,7 @@ bool FlightManagementUnit::ReceiveSensorData(bool publish) {
       size_t analog_counter = 0;
       while ( counter <= Payload.size() - 3 ) {
         uint8_t id = Payload[counter++];
-        uint8_t index = Payload[counter++];
+        /*uint8_t index =*/ Payload[counter++];  // consume the byte
         uint8_t len = Payload[counter++];
         if ( counter + len <= Payload.size() ) {
           if ( id == message::data_time_id ) {
@@ -887,67 +887,63 @@ bool FlightManagementUnit::ConfigureControlLaws(const rapidjson::Value& Config) 
 }
 
 /* Configures the FMU effectors */
-void FlightManagementUnit::ConfigureEffectors(const rapidjson::Value& Config, uint8_t node_address) {
+void FlightManagementUnit::ConfigureEffectors(const rapidjson::Value& Config) {
   std::vector<uint8_t> Payload;
   assert(Config.IsArray());
   for (size_t i=0; i < Config.Size(); i++) {
     const rapidjson::Value& Effector = Config[i];
     if ( Effector.HasMember("Type" ) ) {
-      if ( Effector["Type"] == "Node" ) {
-        if ( Effector.HasMember("Address") and Effector.HasMember("Effectors") ) {
-          ConfigureEffectors(Effector["Effectors"], Effector["Address"].GetInt());
-        } else {
-          printf("ERROR: effector node specified without a valid address or effectors sub block\n");
-        }
+      message::config_effector_t msg;
+      if ( Effector["Type"] == "Motor" ) {
+        msg.effector = message::effector_type::motor;
+      } else if ( Effector["Type"] == "Pwm" ) {
+        msg.effector = message::effector_type::pwm;
+      } else if ( Effector["Type"] == "Sbus" ) {
+        msg.effector = message::effector_type::sbus;
       } else {
-        message::config_effector_t msg;
-        if ( Effector["Type"] == "Motor" ) {
-          msg.effector = message::effector_type::motor;
-        } else if ( Effector["Type"] == "Pwm" ) {
-          msg.effector = message::effector_type::pwm;
-        } else if ( Effector["Type"] == "Sbus" ) {
-          msg.effector = message::effector_type::sbus;
-        } else {
-          printf("ERROR: effector without a valid type\n");
-        }
-        if ( Effector.HasMember("Input") ) {
-          msg.input = Effector["Input"].GetString();
-        } else {
-          printf("ERROR: effector without Input defined\n");
-        }
-        if ( Effector.HasMember("Channel") ) {
-          msg.channel = Effector["Channel"].GetInt();
-        } else {
-          printf("ERROR: effector without Channel defined\n");
-        }
-        msg.calibration[0] = nanf("");
-        msg.calibration[1] = nanf("");
-        msg.calibration[2] = nanf("");
-        msg.calibration[3] = nanf("");
-        if ( Effector.HasMember("Calibration") ) {
-          if ( Effector["Calibration"].IsArray() and Effector["Calibration"].Size() <= message::max_calibration ) {
-            for ( size_t i = 0; i < Effector["Calibration"].Size(); i++ ) {
-              msg.calibration[i] = Effector["Calibration"][i].GetFloat();
-            }
-          } else {
-            printf("ERROR: effector calibration incorrect\n");
+        printf("ERROR: effector without a valid type\n");
+      }
+      if ( Effector.HasMember("Input") ) {
+        msg.input = Effector["Input"].GetString();
+      } else {
+        printf("ERROR: effector without Input defined\n");
+      }
+      if ( Effector.HasMember("Channel") ) {
+        msg.channel = Effector["Channel"].GetInt();
+      } else {
+        printf("ERROR: effector without Channel defined\n");
+      }
+      msg.calibration[0] = nanf("");
+      msg.calibration[1] = nanf("");
+      msg.calibration[2] = nanf("");
+      msg.calibration[3] = nanf("");
+      if ( Effector.HasMember("Calibration") ) {
+        if ( Effector["Calibration"].IsArray() and Effector["Calibration"].Size() <= message::max_calibration ) {
+          for ( size_t i = 0; i < Effector["Calibration"].Size(); i++ ) {
+            msg.calibration[i] = Effector["Calibration"][i].GetFloat();
           }
+        } else {
+          printf("ERROR: effector calibration incorrect\n");
         }
-        printf("eff calib: ");
-        for ( int i = 0; i < message::max_calibration; i++ ) {
-          printf("%f ", msg.calibration[i]);
-        }
-        printf("\n");
-        if ( Effector.HasMember("Safed-Command") ) {
-          msg.safed_command = Effector["Safed-Command"].GetInt();
-        } else if ( Effector["Type"] == "Motor" ){
-          printf("ERROR: effector type motor without a safed-command\n");
-        }
-        msg.pack();
-        SendMessage(msg.id, node_address, msg.payload, msg.len);
-        if ( ! WaitForAck(msg.id, 0, 1000) ) {
-          printf("ERROR: effector command message failed ack!\n");
-        }
+      }
+      printf("eff calib: ");
+      for ( int i = 0; i < message::max_calibration; i++ ) {
+        printf("%f ", msg.calibration[i]);
+      }
+      printf("\n");
+      if ( Effector.HasMember("Safed-Command") ) {
+        msg.safed_command = Effector["Safed-Command"].GetInt();
+      } else if ( Effector["Type"] == "Motor" ){
+        printf("ERROR: effector type motor without a safed-command\n");
+      }
+      uint8_t node_address = 0;
+      if ( Effector.HasMember("Node") ) {
+        node_address = Effector["Node"].GetInt();
+      }
+      msg.pack();
+      SendMessage(msg.id, node_address, msg.payload, msg.len);
+      if ( ! WaitForAck(msg.id, 0, 1000) ) {
+        printf("ERROR: effector command message failed ack!\n");
       }
     } else {
       printf("ERROR: effector defined with no Type\n");
@@ -977,7 +973,7 @@ void FlightManagementUnit::SendMessage(uint8_t message, uint8_t address, uint8_t
 bool FlightManagementUnit::ReceiveMessage(uint8_t *message, std::vector<uint8_t> *Payload) {
   if (_bus->checkReceived()) {
     *message = _bus->read();
-    uint8_t address = _bus->read();
+    /*uint8_t address =*/ _bus->read();  // consume the byte
     // printf("received msg: %d (size = %d)\n", *message, _bus->available());
     Payload->resize(_bus->available());
     _bus->read(Payload->data(),Payload->size());

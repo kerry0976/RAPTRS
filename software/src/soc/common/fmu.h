@@ -236,7 +236,7 @@ class FlightManagementUnit {
     void ConfigureSensors(const rapidjson::Value& Config, uint8_t node_address);
     bool ConfigureMissionManager(const rapidjson::Value& Config);
     bool ConfigureControlLaws(const rapidjson::Value& Config);
-    void ConfigureEffectors(const rapidjson::Value& Config, uint8_t node_address);
+    void ConfigureEffectors(const rapidjson::Value& Config);
     void SendMessage(Message message, uint8_t address, std::vector<uint8_t> &Payload);
     void SendMessage(uint8_t message, uint8_t address, uint8_t *Payload, int len);
     bool ReceiveMessage(uint8_t *message, std::vector<uint8_t> *Payload);

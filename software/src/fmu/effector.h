@@ -51,6 +51,8 @@ class AircraftEffectors {
       float Resolution;
     };
     struct Data {
+      uint8_t NodeAddress;
+      uint8_t NodeIndex;
       EffectorType Type;
       float *Input;
       std::vector<float> Calibration;
@@ -61,14 +63,11 @@ class AircraftEffectors {
     struct NodeData {
       Node *node;
       uint8_t Address;
-      std::vector<float*> Inputs;
-      std::vector<EffectorType> Types;
-      std::vector<float> SafedCommands;
+      std::vector<float> NodeCommands;
     };
     Config config_;
     std::vector<Data> Effectors_;
     std::vector<NodeData> NodeEffectors_;
-    //std::vector<float> EffectorCommands_;
 };
 
 #endif
